@@ -15,6 +15,16 @@
 
 Please read [DEVELOPMENT.md](DEVELOPMENT.md) for instructions on setting up and running the project locally.
 
+## Verified Coding Time
+
+This fork includes server-side heartbeat verification to make time tracking harder to game.
+
+- Each incoming heartbeat gets a `trust_score`, `verified` flag, and `trust_reasons`.
+- Time shown in the status bar and Hackatime compatibility stats is based on verified heartbeats.
+- API responses now expose `raw_total_seconds`, `verified_total_seconds`, and `suspicious_seconds` so clients can compare accepted time against raw activity.
+
+The current verifier is metadata-based: it rewards real typing signals like `is_write`, line additions, deletions, and code-like files, while downranking passive or suspicious events such as non-code files, missing typing signals, and future timestamps.
+
 ## Installer repo
 
 Looking for the installer code? It's over at [hackclub/hackatime-setup](https://github.com/hackclub/hackatime-setup).

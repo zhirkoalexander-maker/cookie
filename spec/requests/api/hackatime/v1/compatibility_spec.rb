@@ -5,6 +5,19 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
     JSON.parse(response.body)
   end
 
+  def create_heartbeat_span(user, count:, started_at:, step_seconds:, **attrs)
+    count.times do |index|
+      Heartbeat.create!(
+        {
+          user: user,
+          time: (started_at + (index * step_seconds)).to_f,
+          category: 'coding',
+          source_type: :direct_entry
+        }.merge(attrs)
+      )
+    end
+  end
+
   path '/api/hackatime/v1/users/{id}/heartbeats' do
     post('Push heartbeats (WakaTime compatible)') do
       tags 'WakaTime Compatibility'
@@ -37,7 +50,7 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
         let(:Authorization) { "Bearer dev-api-key-12345" }
         let(:api_key) { "dev-api-key-12345" }
         let(:id) { 'current' }
-        let(:heartbeats) { [ { entity: 'file.rb', time: Time.now.to_f } ] }
+        let(:heartbeats) { [ { entity: 'file.rb', time: Time.now.to_f, language: 'Ruby', is_write: true } ] }
         schema type: :object,
           properties: {
             id: { type: :integer },
@@ -70,18 +83,6 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
           expect(data["verified"]).to eq(true)
           expect(data["trust_score"]).to be >= 0.7
           expect(data["trust_reasons"]).to eq([])
-        end
-      end
-
-      response(202, 'accepted but unverified') do
-        let(:Authorization) { "Bearer dev-api-key-12345" }
-        let(:api_key) { "dev-api-key-12345" }
-        let(:id) { 'current' }
-        let(:heartbeats) { [ { entity: 'README.md', time: Time.now.to_f, language: nil, is_write: false } ] }
-        run_test! do |response|
-          data = parsed_body(response)
-          expect(data["verified"]).to eq(false)
-          expect(data["trust_reasons"]).to include("no_typing_signal", "not_code_like")
         end
       end
 
@@ -140,10 +141,8 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
           user = User.find_by!(slack_uid: 'TEST123456')
           user.heartbeats.delete_all
 
-          Heartbeat.create!(user: user, time: 90.minutes.ago.to_f, entity: 'main.rb', language: 'Ruby', project: 'verified', category: 'coding', is_write: true, source_type: :direct_entry)
-          Heartbeat.create!(user: user, time: 60.minutes.ago.to_f, entity: 'main.rb', language: 'Ruby', project: 'verified', category: 'coding', is_write: true, source_type: :direct_entry)
-          Heartbeat.create!(user: user, time: 30.minutes.ago.to_f, entity: 'README.md', project: 'passive', category: 'coding', is_write: false, source_type: :direct_entry)
-          Heartbeat.create!(user: user, time: 5.minutes.ago.to_f, entity: 'README.md', project: 'passive', category: 'coding', is_write: false, source_type: :direct_entry)
+          create_heartbeat_span(user, count: 16, started_at: 35.minutes.ago, step_seconds: 120, entity: 'main.rb', language: 'Ruby', project: 'verified', is_write: true)
+          create_heartbeat_span(user, count: 11, started_at: 10.minutes.ago, step_seconds: 120, entity: 'README.md', project: 'passive', is_write: false)
         end
 
         run_test! do |response|
@@ -151,7 +150,7 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
           expect(data["grand_total"]["total_seconds"]).to eq(1800)
           expect(data["verified_total_seconds"]).to eq(1800)
           expect(data["raw_total_seconds"]).to eq(3300)
-          expect(data["suspicious_seconds"]).to eq(1500)
+          expect(data["suspicious_seconds"]).to eq(1200)
         end
       end
 
@@ -299,10 +298,8 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
             user = User.find_by!(slack_uid: 'TEST123456')
             user.heartbeats.delete_all
 
-            Heartbeat.create!(user: user, time: 3.hours.ago.to_f, entity: 'app.ts', language: 'TypeScript', project: 'verified', category: 'coding', is_write: true, source_type: :direct_entry, editor: 'vscode')
-            Heartbeat.create!(user: user, time: 2.hours.ago.to_f, entity: 'app.ts', language: 'TypeScript', project: 'verified', category: 'coding', is_write: true, source_type: :direct_entry, editor: 'vscode')
-            Heartbeat.create!(user: user, time: 50.minutes.ago.to_f, entity: 'notes.md', project: 'passive', category: 'coding', is_write: false, source_type: :direct_entry, editor: 'vscode')
-            Heartbeat.create!(user: user, time: 20.minutes.ago.to_f, entity: 'notes.md', project: 'passive', category: 'coding', is_write: false, source_type: :direct_entry, editor: 'vscode')
+            create_heartbeat_span(user, count: 31, started_at: 4.hours.ago, step_seconds: 120, entity: 'app.ts', language: 'TypeScript', project: 'verified', is_write: true, editor: 'vscode')
+            create_heartbeat_span(user, count: 21, started_at: 90.minutes.ago, step_seconds: 120, entity: 'notes.md', project: 'passive', is_write: false, editor: 'vscode')
           end
 
           run_test! do |response|
@@ -322,4 +319,21 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
         end
       end
     end
+end
+
+RSpec.describe 'Api::Hackatime::V1::Compatibility heartbeat verification', type: :request do
+  it 'marks passive heartbeats as unverified' do
+    post '/api/hackatime/v1/users/current/heartbeats',
+      params: [ { entity: 'README.md', time: Time.now.to_f, language: nil, is_write: false } ].to_json,
+      headers: {
+        'CONTENT_TYPE' => 'application/json',
+        'Authorization' => 'Bearer dev-api-key-12345'
+      }
+
+    expect(response).to have_http_status(:accepted)
+
+    data = JSON.parse(response.body)
+    expect(data['verified']).to eq(false)
+    expect(data['trust_reasons']).to include('no_typing_signal', 'not_code_like')
+  end
 end
