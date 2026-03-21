@@ -1,4 +1,5 @@
 class Heartbeat < ApplicationRecord
+  before_validation :assign_trust_verification!
   before_save :set_fields_hash!
 
   include Heartbeatable
@@ -13,6 +14,8 @@ class Heartbeat < ApplicationRecord
   scope :recent, -> { where("time > ?", 24.hours.ago.to_i) }
   scope :with_deleted, -> { unscope(where: :deleted_at) }
   scope :only_deleted, -> { with_deleted.where.not(deleted_at: nil) }
+  scope :verified_only, -> { where(verified: true) }
+  scope :unverified_only, -> { where(verified: false) }
 
   enum :source_type, {
     direct_entry: 0,
@@ -119,6 +122,15 @@ class Heartbeat < ApplicationRecord
   end
 
   private
+
+  def assign_trust_verification!
+    return unless self.class.column_names.include?("verified")
+
+    verdict = HeartbeatTrustScorer.new(heartbeat: self).call
+    self.verified = verdict[:verified]
+    self.trust_score = verdict[:trust_score]
+    self.trust_reasons = verdict[:trust_reasons]
+  end
 
   def set_fields_hash!
     # only if the field exists in activerecord

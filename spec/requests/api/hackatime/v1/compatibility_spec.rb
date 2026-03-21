@@ -1,6 +1,10 @@
 require 'swagger_helper'
 
 RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
+  def parsed_body(response)
+    JSON.parse(response.body)
+  end
+
   path '/api/hackatime/v1/users/{id}/heartbeats' do
     post('Push heartbeats (WakaTime compatible)') do
       tags 'WakaTime Compatibility'
@@ -53,9 +57,32 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
             editor: { type: :string, nullable: true },
             operating_system: { type: :string, nullable: true },
             machine: { type: :string, nullable: true },
-            user_agent: { type: :string, nullable: true }
+            user_agent: { type: :string, nullable: true },
+            verified: { type: :boolean },
+            trust_score: { type: :number },
+            trust_reasons: {
+              type: :array,
+              items: { type: :string }
+            }
           }
-        run_test!
+        run_test! do |response|
+          data = parsed_body(response)
+          expect(data["verified"]).to eq(true)
+          expect(data["trust_score"]).to be >= 0.7
+          expect(data["trust_reasons"]).to eq([])
+        end
+      end
+
+      response(202, 'accepted but unverified') do
+        let(:Authorization) { "Bearer dev-api-key-12345" }
+        let(:api_key) { "dev-api-key-12345" }
+        let(:id) { 'current' }
+        let(:heartbeats) { [ { entity: 'README.md', time: Time.now.to_f, language: nil, is_write: false } ] }
+        run_test! do |response|
+          data = parsed_body(response)
+          expect(data["verified"]).to eq(false)
+          expect(data["trust_reasons"]).to include("no_typing_signal", "not_code_like")
+        end
       end
 
       response(401, 'unauthorized') do
@@ -93,6 +120,9 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
                     text: { type: :string, example: '2h 30m / 4h today' }
                   }
                 },
+                raw_total_seconds: { type: :number, example: 10800.0 },
+                verified_total_seconds: { type: :number, example: 7200.0 },
+                suspicious_seconds: { type: :number, example: 3600.0 },
                 goal: {
                   type: :object,
                   nullable: true,
@@ -106,7 +136,23 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
               }
             }
           }
-        run_test!
+        before do
+          user = User.find_by!(slack_uid: 'TEST123456')
+          user.heartbeats.delete_all
+
+          Heartbeat.create!(user: user, time: 90.minutes.ago.to_f, entity: 'main.rb', language: 'Ruby', project: 'verified', category: 'coding', is_write: true, source_type: :direct_entry)
+          Heartbeat.create!(user: user, time: 60.minutes.ago.to_f, entity: 'main.rb', language: 'Ruby', project: 'verified', category: 'coding', is_write: true, source_type: :direct_entry)
+          Heartbeat.create!(user: user, time: 30.minutes.ago.to_f, entity: 'README.md', project: 'passive', category: 'coding', is_write: false, source_type: :direct_entry)
+          Heartbeat.create!(user: user, time: 5.minutes.ago.to_f, entity: 'README.md', project: 'passive', category: 'coding', is_write: false, source_type: :direct_entry)
+        end
+
+        run_test! do |response|
+          data = parsed_body(response).fetch("data")
+          expect(data["grand_total"]["total_seconds"]).to eq(1800)
+          expect(data["verified_total_seconds"]).to eq(1800)
+          expect(data["raw_total_seconds"]).to eq(3300)
+          expect(data["suspicious_seconds"]).to eq(1500)
+        end
       end
 
       response(401, 'unauthorized') do
@@ -139,6 +185,9 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
                   end: { type: :string, format: :date_time },
                   status: { type: :string },
                   total_seconds: { type: :number },
+                  raw_total_seconds: { type: :number },
+                  verified_total_seconds: { type: :number },
+                  suspicious_seconds: { type: :number },
                   daily_average: { type: :number },
                   days_including_holidays: { type: :integer },
                   range: { type: :string },
@@ -246,7 +295,24 @@ RSpec.describe 'Api::Hackatime::V1::Compatibility', type: :request do
                 }
               }
             }
-          run_test!
+          before do
+            user = User.find_by!(slack_uid: 'TEST123456')
+            user.heartbeats.delete_all
+
+            Heartbeat.create!(user: user, time: 3.hours.ago.to_f, entity: 'app.ts', language: 'TypeScript', project: 'verified', category: 'coding', is_write: true, source_type: :direct_entry, editor: 'vscode')
+            Heartbeat.create!(user: user, time: 2.hours.ago.to_f, entity: 'app.ts', language: 'TypeScript', project: 'verified', category: 'coding', is_write: true, source_type: :direct_entry, editor: 'vscode')
+            Heartbeat.create!(user: user, time: 50.minutes.ago.to_f, entity: 'notes.md', project: 'passive', category: 'coding', is_write: false, source_type: :direct_entry, editor: 'vscode')
+            Heartbeat.create!(user: user, time: 20.minutes.ago.to_f, entity: 'notes.md', project: 'passive', category: 'coding', is_write: false, source_type: :direct_entry, editor: 'vscode')
+          end
+
+          run_test! do |response|
+            data = parsed_body(response).fetch("data")
+            expect(data["total_seconds"]).to eq(3600)
+            expect(data["verified_total_seconds"]).to eq(3600)
+            expect(data["raw_total_seconds"]).to eq(6000)
+            expect(data["suspicious_seconds"]).to eq(2400)
+            expect(data["projects"].map { |entry| entry["name"] }).to eq([ "verified" ])
+          end
         end
 
         response(401, 'unauthorized') do

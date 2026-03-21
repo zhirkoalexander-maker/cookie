@@ -36,7 +36,9 @@ class Api::V1::My::HeartbeatsController < ApplicationController
     render json: {
       start_time: start_time,
       end_time: end_time,
-      total_seconds: heartbeats.duration_seconds,
+      total_seconds: heartbeats.verified_only.duration_seconds,
+      raw_total_seconds: heartbeats.duration_seconds,
+      verified_total_seconds: heartbeats.verified_only.duration_seconds,
       heartbeats: heartbeats
     }
   end

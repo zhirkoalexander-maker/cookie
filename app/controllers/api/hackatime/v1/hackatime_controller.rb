@@ -46,7 +46,9 @@ class Api::Hackatime::V1::HackatimeController < ApplicationController
   def status_bar_today
     Time.use_zone(@user.timezone) do
       hbt = @user.heartbeats.today
-      total_seconds = hbt.duration_seconds
+      raw_total_seconds = hbt.duration_seconds
+      verified_total_seconds = hbt.verified_only.duration_seconds
+      suspicious_seconds = [ raw_total_seconds - verified_total_seconds, 0 ].max
 
       # Check if user has a daily goal
       daily_goal = @user.goals.find_by(period: "day")
@@ -54,9 +56,12 @@ class Api::Hackatime::V1::HackatimeController < ApplicationController
       result = {
         data: {
           grand_total: {
-            text: @user.format_extension_text(total_seconds),
-            total_seconds: total_seconds
-          }
+            text: @user.format_extension_text(verified_total_seconds),
+            total_seconds: verified_total_seconds
+          },
+          raw_total_seconds: raw_total_seconds,
+          verified_total_seconds: verified_total_seconds,
+          suspicious_seconds: suspicious_seconds
         }
       }
 
@@ -95,13 +100,16 @@ class Api::Hackatime::V1::HackatimeController < ApplicationController
 
         # Get heartbeats in the time range
         heartbeats = @user.heartbeats.where(time: start_timestamp..end_timestamp)
+        verified_heartbeats = heartbeats.verified_only
 
         # Calculate total seconds
-        total_seconds = heartbeats.duration_seconds.to_i
+        raw_total_seconds = heartbeats.duration_seconds.to_i
+        total_seconds = verified_heartbeats.duration_seconds.to_i
+        suspicious_seconds = [ raw_total_seconds - total_seconds, 0 ].max
 
         # Get unique days
         days = []
-        heartbeats.pluck(:time).each do |timestamp|
+        verified_heartbeats.pluck(:time).each do |timestamp|
           day = Time.at(timestamp).in_time_zone(@user.timezone).to_date
           days << day unless days.include?(day)
         end
@@ -120,11 +128,11 @@ class Api::Hackatime::V1::HackatimeController < ApplicationController
         human_readable_daily_average = "#{avg_hours} hrs #{avg_minutes} mins"
 
         # Calculate statistics for different categories
-        editors_data = calculate_category_stats(heartbeats, "editor")
-        languages_data = calculate_category_stats(heartbeats, "language")
-        projects_data = calculate_category_stats(heartbeats, "project")
-        machines_data = calculate_category_stats(heartbeats, "machine")
-        os_data = calculate_category_stats(heartbeats, "operating_system")
+        editors_data = calculate_category_stats(verified_heartbeats, "editor")
+        languages_data = calculate_category_stats(verified_heartbeats, "language")
+        projects_data = calculate_category_stats(verified_heartbeats, "project")
+        machines_data = calculate_category_stats(verified_heartbeats, "machine")
+        os_data = calculate_category_stats(verified_heartbeats, "operating_system")
 
       # Categories data
       hours = total_seconds / 3600
@@ -152,6 +160,9 @@ class Api::Hackatime::V1::HackatimeController < ApplicationController
           end: end_time.iso8601,
           status: "ok",
           total_seconds: total_seconds,
+          raw_total_seconds: raw_total_seconds,
+          verified_total_seconds: total_seconds,
+          suspicious_seconds: suspicious_seconds,
           daily_average: daily_average,
           days_including_holidays: days_covered,
           range: "last_7_days",

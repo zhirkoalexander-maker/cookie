@@ -40,11 +40,15 @@ module DashboardData
         end
 
         hb = hb.filter_by_time_range(interval, params[:from], params[:to])
-        result[:total_time] = hb.duration_seconds
+        verified_hb = hb.verified_only
+        result[:total_time] = verified_hb.duration_seconds
+        result[:raw_total_time] = hb.duration_seconds
+        result[:verified_total_time] = result[:total_time]
         result[:total_heartbeats] = hb.count
+        result[:verified_heartbeats] = verified_hb.count
 
         filters.each do |f|
-          stats = hb.group(f).duration_seconds
+          stats = verified_hb.group(f).duration_seconds
           stats = stats.reject { |n, _| archived.include?(n) } if f == :project
           result["top_#{f}"] = stats.max_by { |_, v| v }&.first
         end
@@ -54,13 +58,13 @@ module DashboardData
         result["top_language"] &&= h.display_language_name(result["top_language"])
 
         unless result["singular_project"]
-          result[:project_durations] = hb.group(:project).duration_seconds
+          result[:project_durations] = verified_hb.group(:project).duration_seconds
             .reject { |p, _| archived.include?(p) }.sort_by { |_, d| -d }.first(10).to_h
         end
 
         %i[language editor operating_system category].each do |f|
           next if result["singular_#{f}"]
-          stats = hb.group(f).duration_seconds.each_with_object({}) do |(raw, dur), agg|
+          stats = verified_hb.group(f).duration_seconds.each_with_object({}) do |(raw, dur), agg|
             k = raw.to_s.presence || "Unknown"
             k = f == :language ? (k == "Unknown" ? k : k.categorize_language) : (%i[editor operating_system].include?(f) ? k.downcase : k)
             agg[k] = (agg[k] || 0) + dur
@@ -82,7 +86,7 @@ module DashboardData
 
         result[:weekly_project_stats] = (0..11).to_h do |w|
           ws = w.weeks.ago.beginning_of_week
-          [ ws.to_date.iso8601, hb.where(time: ws.to_f..w.weeks.ago.end_of_week.to_f)
+          [ ws.to_date.iso8601, verified_hb.where(time: ws.to_f..w.weeks.ago.end_of_week.to_f)
               .group(:project).duration_seconds.reject { |p, _| archived.include?(p) } ]
         end
       end
@@ -97,9 +101,9 @@ module DashboardData
 
   def activity_graph_data
     tz = current_user.timezone
-    key = "user_#{current_user.id}_daily_durations_#{tz}"
+    key = "user_#{current_user.id}_daily_verified_durations_v1_#{tz}"
     durations = Rails.cache.fetch(key, expires_in: 1.minute) do
-      Time.use_zone(tz) { current_user.heartbeats.daily_durations(user_timezone: tz).to_h }
+      Time.use_zone(tz) { current_user.heartbeats.verified_only.daily_durations(user_timezone: tz).to_h }
     end
 
     {
@@ -116,6 +120,7 @@ module DashboardData
     h = ApplicationController.helpers
     Time.use_zone(current_user.timezone) do
       rows = current_user.heartbeats.today
+        .verified_only
         .select(:language, :editor,
                 "COUNT(*) OVER (PARTITION BY language) as language_count",
                 "COUNT(*) OVER (PARTITION BY editor) as editor_count")
@@ -134,7 +139,7 @@ module DashboardData
 
       todays_languages = lang_counts.map { |l, _| h.display_language_name(l) }
       todays_editors = ed_counts.map { |e, _| h.display_editor_name(e) }
-      todays_duration = current_user.heartbeats.today.duration_seconds
+      todays_duration = current_user.heartbeats.today.verified_only.duration_seconds
       show_logged_time_sentence = todays_duration > 1.minute && (todays_languages.any? || todays_editors.any?)
 
       {

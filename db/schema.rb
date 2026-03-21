@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_03_13_140000) do
+ActiveRecord::Schema[8.1].define(version: 2026_03_21_110000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pg_stat_statements"
@@ -304,10 +304,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_03_13_140000) do
     t.bigint "raw_heartbeat_upload_id"
     t.integer "source_type", null: false
     t.float "time", null: false
+    t.float "trust_score", default: 1.0, null: false
+    t.string "trust_reasons", default: [], null: false, array: true
     t.string "type"
     t.datetime "updated_at", null: false
     t.string "user_agent"
     t.bigint "user_id", null: false
+    t.boolean "verified", default: true, null: false
     t.integer "ysws_program", default: 0, null: false
     t.index ["category", "time"], name: "index_heartbeats_on_category_and_time"
     t.index ["fields_hash"], name: "index_heartbeats_on_fields_hash_when_not_deleted", unique: true, where: "(deleted_at IS NULL)"
@@ -330,6 +333,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_03_13_140000) do
     t.index ["user_id", "time", "language"], name: "idx_heartbeats_user_time_language_stats", where: "(deleted_at IS NULL)"
     t.index ["user_id", "time", "project"], name: "idx_heartbeats_user_time_project_stats", where: "(deleted_at IS NULL)"
     t.index ["user_id", "time"], name: "idx_heartbeats_user_time_active", where: "(deleted_at IS NULL)"
+    t.index ["user_id", "verified", "time"], name: "idx_heartbeats_user_verified_time", where: "(deleted_at IS NULL)"
     t.index ["user_id"], name: "index_heartbeats_on_user_id"
   end
 

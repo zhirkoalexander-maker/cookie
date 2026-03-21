@@ -49,7 +49,7 @@ class ProgrammingGoalsProgressService
       scope = scope.where(language: matching_languages)
     end
 
-    scope.duration_seconds.to_i
+    scope.verified_only.duration_seconds.to_i
   end
 
   def languages_grouped_by_category(languages)
